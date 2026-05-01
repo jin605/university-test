@@ -30,7 +30,7 @@ pipeline {
     }
 
     environment {
-        DOCKER_IMAGE_NAME = "jin605/department-test"
+        DOCKER_IMAGE_NAME = "jin604/department-test"
         DOCKER_CREDENTIALS_ID = "dockerhub-access"
         DISCORD_WEBHOOK_CREDENTIALS_ID = "discord-webhook"
         
@@ -165,30 +165,36 @@ pipeline {
     // }
 
     post {
-    success {
-        withCredentials([string(
-            credentialsId: DISCORD_WEBHOOK_CREDENTIALS_ID,
-            variable: 'DISCORD_WEBHOOK_URL'
-        )]) {
-            sh '''
-            curl -H "Content-Type: application/json" \
-              -d '{"content":"Jenkins build success"}' \
-              "$DISCORD_WEBHOOK_URL"
-            '''
+        success {
+            withCredentials([string(
+                credentialsId: DISCORD_WEBHOOK_CREDENTIALS_ID,
+                variable: 'DISCORD_WEBHOOK_URL'
+            )]) {
+                sh """
+                curl -X POST \
+                -H 'Content-Type: application/json' \
+                --data '{
+                    "content": "✅ **Jenkins Build Success**\\n\\n**Job**: ${env.JOB_NAME}\\n**Build**: #${env.BUILD_NUMBER}\\n**Branch**: ${env.BRANCH_NAME ?: "N/A"}\\n**Image**: ${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}\\n**Duration**: ${currentBuild.durationString}\\n**URL**: ${env.BUILD_URL}"
+                }' \
+                "${DISCORD_WEBHOOK_URL}"
+                """
+            }
         }
-    }
 
-    failure {
-        withCredentials([string(
-            credentialsId: DISCORD_WEBHOOK_CREDENTIALS_ID,
-            variable: 'DISCORD_WEBHOOK_URL'
-        )]) {
-            sh '''
-            curl -H "Content-Type: application/json" \
-              -d '{"content":"Jenkins build failed"}' \
-              "$DISCORD_WEBHOOK_URL"
-            '''
-          }
+        failure {
+            withCredentials([string(
+                credentialsId: DISCORD_WEBHOOK_CREDENTIALS_ID,
+                variable: 'DISCORD_WEBHOOK_URL'
+            )]) {
+                sh """
+                curl -X POST \
+                -H 'Content-Type: application/json' \
+                --data '{
+                    "content": "❌ **Jenkins Build Failed**\\n\\n**Job**: ${env.JOB_NAME}\\n**Build**: #${env.BUILD_NUMBER}\\n**Branch**: ${env.BRANCH_NAME ?: "N/A"}\\n**Stage**: Check Jenkins Console Log\\n**Duration**: ${currentBuild.durationString}\\n**URL**: ${env.BUILD_URL}"
+                }' \
+                "${DISCORD_WEBHOOK_URL}"
+                """
+            }
         }
     }
 }
