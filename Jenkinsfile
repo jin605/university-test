@@ -105,6 +105,35 @@ pipeline {
                 }
             }
         }
+
+        stage('Update Manifest Repository') {
+            steps {
+                container('docker') {
+                    sshagent(credentials: ['github-jenkins-for-university-test-manifest']) {
+                        sh '''
+                            apk add --no-cache git openssh-client
+
+                            mkdir -p ~/.ssh
+                            ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+                            rm -rf university-test-manifest
+                            git clone git@github.com:jin605/university-test-manifest.git
+
+                            cd university-test-manifest
+
+                            git config user.name "jenkins"
+                            git config user.email "jenkins@local"
+
+                            sed -i "s|image: jin604/department-test:.*|image: jin604/department-test:${BUILD_NUMBER}|g" university-test/department-api-deploy.yaml
+
+                            git add university-test/department-api-deploy.yaml
+                            git commit -m "Update department image to ${BUILD_NUMBER}" || echo "No changes to commit"
+                            git push origin main
+                        '''
+                    }
+                }
+            }
+        }
     }
 
     // post {
@@ -197,5 +226,5 @@ pipeline {
             }
         }
     }
-    
+
 }
