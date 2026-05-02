@@ -53,13 +53,19 @@ pipeline {
         APP_NAMESPACE = "university"
         APP_DEPLOYMENT_NAME = "department-api-deploy"
 
-        CI_STATUS = "NOT_STARTED"
-        MANIFEST_STATUS = "NOT_STARTED"
-        CD_STATUS = "NOT_STARTED"
-        
     }
 
     stages {
+
+        stage('Init Status') {
+            steps {
+                script {
+                    env.CI_STATUS = "NOT_STARTED"
+                    env.MANIFEST_STATUS = "NOT_STARTED"
+                    env.CD_STATUS = "NOT_STARTED"
+                }
+            }
+        }        
         // stage('SonarQube Analysis') {
         //     steps {
         //         container('maven') {
@@ -179,40 +185,55 @@ pipeline {
                         try {
                             def expectedImage = "${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}"
 
-                            sh """
-                                echo "Expected image: ${expectedImage}"
+                                sh """
+                                    echo "Expected image: ${expectedImage}"
 
-                                kubectl rollout status deployment/${APP_DEPLOYMENT_NAME} \
-                                  -n ${APP_NAMESPACE} \
-                                  --timeout=300s
+                                    for i in \$(seq 1 30); do
+                                    CURRENT_IMAGE=\$(kubectl get deploy ${APP_DEPLOYMENT_NAME} \
+                                        -n ${APP_NAMESPACE} \
+                                        -o=jsonpath='{.spec.template.spec.containers[0].image}')
 
-                                CURRENT_IMAGE=\$(kubectl get deploy ${APP_DEPLOYMENT_NAME} \
-                                  -n ${APP_NAMESPACE} \
-                                  -o=jsonpath='{.spec.template.spec.containers[0].image}')
+                                    echo "Current image: \$CURRENT_IMAGE"
 
-                                echo "Current image: \$CURRENT_IMAGE"
+                                    if [ "\$CURRENT_IMAGE" = "${expectedImage}" ]; then
+                                        break
+                                    fi
 
-                                if [ "\$CURRENT_IMAGE" != "${expectedImage}" ]; then
-                                  echo "CD failed: expected ${expectedImage}, but got \$CURRENT_IMAGE"
-                                  exit 1
-                                fi
+                                    echo "Waiting for Argo CD to apply new image..."
+                                    sleep 10
+                                    done
 
-                                APP_SYNC=\$(kubectl get application ${ARGOCD_APP_NAME} \
-                                  -n ${ARGOCD_NAMESPACE} \
-                                  -o=jsonpath='{.status.sync.status}')
+                                    kubectl rollout status deployment/${APP_DEPLOYMENT_NAME} \
+                                    -n ${APP_NAMESPACE} \
+                                    --timeout=300s
 
-                                APP_HEALTH=\$(kubectl get application ${ARGOCD_APP_NAME} \
-                                  -n ${ARGOCD_NAMESPACE} \
-                                  -o=jsonpath='{.status.health.status}')
+                                    CURRENT_IMAGE=\$(kubectl get deploy ${APP_DEPLOYMENT_NAME} \
+                                    -n ${APP_NAMESPACE} \
+                                    -o=jsonpath='{.spec.template.spec.containers[0].image}')
 
-                                echo "Argo CD Sync: \$APP_SYNC"
-                                echo "Argo CD Health: \$APP_HEALTH"
+                                    echo "Current image after rollout: \$CURRENT_IMAGE"
 
-                                if [ "\$APP_SYNC" != "Synced" ] || [ "\$APP_HEALTH" != "Healthy" ]; then
-                                  echo "CD failed: Argo CD is \$APP_SYNC / \$APP_HEALTH"
-                                  exit 1
-                                fi
-                            """
+                                    if [ "\$CURRENT_IMAGE" != "${expectedImage}" ]; then
+                                    echo "CD failed: expected ${expectedImage}, but got \$CURRENT_IMAGE"
+                                    exit 1
+                                    fi
+
+                                    APP_SYNC=\$(kubectl get application ${ARGOCD_APP_NAME} \
+                                    -n ${ARGOCD_NAMESPACE} \
+                                    -o=jsonpath='{.status.sync.status}')
+
+                                    APP_HEALTH=\$(kubectl get application ${ARGOCD_APP_NAME} \
+                                    -n ${ARGOCD_NAMESPACE} \
+                                    -o=jsonpath='{.status.health.status}')
+
+                                    echo "Argo CD Sync: \$APP_SYNC"
+                                    echo "Argo CD Health: \$APP_HEALTH"
+
+                                    if [ "\$APP_SYNC" != "Synced" ] || [ "\$APP_HEALTH" != "Healthy" ]; then
+                                    echo "CD failed: Argo CD is \$APP_SYNC / \$APP_HEALTH"
+                                    exit 1
+                                    fi
+                                """
 
                             env.CD_STATUS = "SUCCESS"
                         } catch (err) {
