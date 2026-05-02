@@ -24,7 +24,7 @@ pipeline {
                   name: docker-socket
 
               - name: kubectl
-                image: registry.k8s.io/kubectl:v1.34.0
+                image: alpine/k8s:1.34.0
                 command:
                 - cat
                 tty: true
