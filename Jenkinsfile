@@ -33,6 +33,8 @@ pipeline {
         DOCKER_IMAGE_NAME = "jin604/department-test"
         DOCKER_CREDENTIALS_ID = "dockerhub-access"
         DISCORD_WEBHOOK_CREDENTIALS_ID = "discord-webhook"
+        MANIFEST_REPO_CREDENTIALS_ID = "github-jenkins-for-university-test-manifest"
+        MANIFEST_REPO_URL = "git@github.com:jin605/university-test-manifest.git"
         
     }
 
@@ -109,7 +111,11 @@ pipeline {
         stage('Update Manifest Repository') {
             steps {
                 container('docker') {
-                    sshagent(credentials: ['github-jenkins-for-university-test-manifest']) {
+                    withCredentials([sshUserPrivateKey(
+                        credentialsId: MANIFEST_REPO_CREDENTIALS_ID,
+                        keyFileVariable: 'SSH_KEY',
+                        usernameVariable: 'GIT_USERNAME'
+                    )]) {
                         sh '''
                             apk add --no-cache git openssh-client
 
@@ -117,7 +123,9 @@ pipeline {
                             ssh-keyscan github.com >> ~/.ssh/known_hosts
 
                             rm -rf university-test-manifest
-                            git clone git@github.com:jin605/university-test-manifest.git
+
+                            GIT_SSH_COMMAND="ssh -i $SSH_KEY -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
+                            git clone "$MANIFEST_REPO_URL"
 
                             cd university-test-manifest
 
@@ -128,6 +136,8 @@ pipeline {
 
                             git add university-test/department-api-deploy.yaml
                             git commit -m "Update department image to ${BUILD_NUMBER}" || echo "No changes to commit"
+
+                            GIT_SSH_COMMAND="ssh -i $SSH_KEY -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
                             git push origin main
                         '''
                     }
