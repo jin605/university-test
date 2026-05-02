@@ -13,6 +13,7 @@ pipeline {
                 command:
                 - cat
                 tty: true
+
               - name: docker
                 image: docker:29.4.1-cli-alpine3.23
                 command:
@@ -21,6 +22,13 @@ pipeline {
                 volumeMounts:
                 - mountPath: "/var/run/docker.sock"
                   name: docker-socket
+
+              - name: kubectl
+                image: bitnami/kubectl:1.34.1
+                command:
+                - cat
+                tty: true
+
               volumes:
               - name: docker-socket
                 hostPath:
@@ -30,11 +38,24 @@ pipeline {
     }
 
     environment {
+        // Docker Hub과 관련된 환경 변수
         DOCKER_IMAGE_NAME = "jin604/department-test"
         DOCKER_CREDENTIALS_ID = "dockerhub-access"
         DISCORD_WEBHOOK_CREDENTIALS_ID = "discord-webhook"
+
+        // 매니페스트 저장소와 관련된 환경 변수
         MANIFEST_REPO_CREDENTIALS_ID = "github-jenkins-for-university-test-manifest"
         MANIFEST_REPO_URL = "git@github.com:jin605/university-test-manifest.git"
+
+        // 상태 추적을 위한 환경 변수
+        ARGOCD_APP_NAME = "university-test"
+        ARGOCD_NAMESPACE = "argocd"
+        APP_NAMESPACE = "university"
+        APP_DEPLOYMENT_NAME = "department-api-deploy"
+
+        CI_STATUS = "NOT_STARTED"
+        MANIFEST_STATUS = "NOT_STARTED"
+        CD_STATUS = "NOT_STARTED"
         
     }
 
@@ -100,6 +121,7 @@ pipeline {
                                 sh 'docker build --no-cache -t $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_VERSION ./'
                                 sh 'docker image inspect $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_VERSION'
                                 sh 'docker push $DOCKER_IMAGE_NAME:$DOCKER_IMAGE_VERSION'
+                                env.CI_STATUS = "SUCCESS"
 
                             }
                         }                        
@@ -140,6 +162,63 @@ pipeline {
                             GIT_SSH_COMMAND="ssh -i $SSH_KEY -o UserKnownHostsFile=$HOME/.ssh/known_hosts" \
                             git push origin main
                         '''
+                        script {
+                            env.MANIFEST_STATUS = "SUCCESS"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Verify CD Deployment') {
+            steps {
+                container('kubectl') {
+                    script {
+                        env.CD_STATUS = "CHECKING"
+
+                        try {
+                            def expectedImage = "${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}"
+
+                            sh """
+                                echo "Expected image: ${expectedImage}"
+
+                                kubectl rollout status deployment/${APP_DEPLOYMENT_NAME} \
+                                  -n ${APP_NAMESPACE} \
+                                  --timeout=300s
+
+                                CURRENT_IMAGE=\$(kubectl get deploy ${APP_DEPLOYMENT_NAME} \
+                                  -n ${APP_NAMESPACE} \
+                                  -o=jsonpath='{.spec.template.spec.containers[0].image}')
+
+                                echo "Current image: \$CURRENT_IMAGE"
+
+                                if [ "\$CURRENT_IMAGE" != "${expectedImage}" ]; then
+                                  echo "CD failed: expected ${expectedImage}, but got \$CURRENT_IMAGE"
+                                  exit 1
+                                fi
+
+                                APP_SYNC=\$(kubectl get application ${ARGOCD_APP_NAME} \
+                                  -n ${ARGOCD_NAMESPACE} \
+                                  -o=jsonpath='{.status.sync.status}')
+
+                                APP_HEALTH=\$(kubectl get application ${ARGOCD_APP_NAME} \
+                                  -n ${ARGOCD_NAMESPACE} \
+                                  -o=jsonpath='{.status.health.status}')
+
+                                echo "Argo CD Sync: \$APP_SYNC"
+                                echo "Argo CD Health: \$APP_HEALTH"
+
+                                if [ "\$APP_SYNC" != "Synced" ] || [ "\$APP_HEALTH" != "Healthy" ]; then
+                                  echo "CD failed: Argo CD is \$APP_SYNC / \$APP_HEALTH"
+                                  exit 1
+                                fi
+                            """
+
+                            env.CD_STATUS = "SUCCESS"
+                        } catch (err) {
+                            env.CD_STATUS = "FAILED"
+                            throw err
+                        }
                     }
                 }
             }
@@ -213,7 +292,7 @@ pipeline {
                 curl -X POST \
                 -H 'Content-Type: application/json' \
                 --data '{
-                    "content": "✅ **Jenkins Build Success**\\n\\n**Job**: ${env.JOB_NAME}\\n**Build**: #${env.BUILD_NUMBER}\\n**Branch**: ${env.BRANCH_NAME ?: "N/A"}\\n**Image**: ${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}\\n**Duration**: ${currentBuild.durationString}\\n**URL**: ${env.BUILD_URL}"
+                    "content": "✅ **CI/CD Success**\\n\\n**Job**: ${env.JOB_NAME}\\n**Build**: #${env.BUILD_NUMBER}\\n**CI**: ${env.CI_STATUS}\\n**Manifest**: ${env.MANIFEST_STATUS}\\n**CD**: ${env.CD_STATUS}\\n**Image**: ${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}\\n**Argo CD App**: ${ARGOCD_APP_NAME}\\n**Namespace**: ${APP_NAMESPACE}\\n**Duration**: ${currentBuild.durationString}\\n**URL**: ${env.BUILD_URL}"
                 }' \
                 "${DISCORD_WEBHOOK_URL}"
                 """
@@ -229,7 +308,7 @@ pipeline {
                 curl -X POST \
                 -H 'Content-Type: application/json' \
                 --data '{
-                    "content": "❌ **Jenkins Build Failed**\\n\\n**Job**: ${env.JOB_NAME}\\n**Build**: #${env.BUILD_NUMBER}\\n**Branch**: ${env.BRANCH_NAME ?: "N/A"}\\n**Stage**: Check Jenkins Console Log\\n**Duration**: ${currentBuild.durationString}\\n**URL**: ${env.BUILD_URL}"
+                    "content": "❌ **CI/CD Failed**\\n\\n**Job**: ${env.JOB_NAME}\\n**Build**: #${env.BUILD_NUMBER}\\n**CI**: ${env.CI_STATUS}\\n**Manifest**: ${env.MANIFEST_STATUS}\\n**CD**: ${env.CD_STATUS}\\n**Image**: ${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}\\n**Stage**: Check Jenkins Console Log\\n**Duration**: ${currentBuild.durationString}\\n**URL**: ${env.BUILD_URL}"
                 }' \
                 "${DISCORD_WEBHOOK_URL}"
                 """
